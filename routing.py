@@ -14,8 +14,9 @@ def get_graph():
       print("OSM Graph loaded successfully!")
     except Exception as e:
       print(f"OSM download failed ({e}), using grid fallback.")
-      G = nx.grid_2d_graph(10, 10)
-      G = nx.convert_node_labels_to_integers(G)
+      # Create a safe grid graph with integer node labels
+      grid = nx.grid_2d_graph(10, 10)
+      G = nx.convert_node_labels_to_integers(grid)
       for u, v, data in G.edges(data=True):
         data["length"] = 1.0
   return G
@@ -28,7 +29,7 @@ def run_emergency_routing(
     graph = get_graph()
     is_osm = isinstance(graph, (nx.DiGraph, nx.MultiDiGraph))
 
-    # 1. Snap coordinates to nearest nodes
+    # 1. Safely pick source and target nodes based on graph type
     if is_osm:
       try:
         source_node = ox.distance.nearest_nodes(
@@ -41,8 +42,10 @@ def run_emergency_routing(
         nodes = list(graph.nodes())
         source_node, incident_node = nodes[0], nodes[1]
     else:
+      # Fallback grid graph node selection (guaranteed valid indices)
       nodes = list(graph.nodes())
-      source_node, incident_node = nodes[0], nodes[min(5, len(nodes) - 1)]
+      source_node = nodes[0]
+      incident_node = nodes[min(15, len(nodes) - 1)]
 
     if source_node == incident_node:
       return {
@@ -58,17 +61,16 @@ def run_emergency_routing(
       )
     except nx.NetworkXNoPath:
       if is_osm:
-        # Automatically pick two nodes from the largest connected component
         undirected = graph.to_undirected()
         largest_cc = max(nx.connected_components(undirected), key=len)
         cc_nodes = list(largest_cc)
-        source_node, incident_node = cc_nodes[0], cc_nodes[1]
+        source_node, incident_node = cc_nodes[0], cc_nodes[min(1, len(cc_nodes)-1)]
         normal_path = nx.shortest_path(
             graph, source=source_node, target=incident_node, weight="length"
         )
       else:
         nodes = list(graph.nodes())
-        source_node, incident_node = nodes[0], nodes[min(10, len(nodes) - 1)]
+        source_node, incident_node = nodes[0], nodes[min(20, len(nodes) - 1)]
         normal_path = nx.shortest_path(
             graph, source=source_node, target=incident_node, weight="length"
         )
