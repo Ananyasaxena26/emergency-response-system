@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Emergency Response & Dispatch Command Center</title>
+    <!-- Leaflet CSS for Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; background: #f4f7f6; }
+        #sidebar { width: 350px; background: #2c3e50; color: white; padding: 20px; box-shadow: 2px 0 10px rgba(0,0,0,0.2); display: flex; flex-direction: column; justify-content: space-between; }
+        #map { flex-grow: 1; height: 100%; }
+        h2 { font-size: 20px; border-bottom: 2px solid #e74c3c; padding-bottom: 10px; margin-top: 0; }
+        .card { background: #34495e; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+        button { background: #e74c3c; color: white; border: none; padding: 12px; width: 100%; font-size: 16px; border-radius: 5px; cursor: pointer; font-weight: bold; }
+        button:hover { background: #c0392b; }
+        .log-box { background: #1a252f; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 13px; height: 140px; overflow-y: auto; color: #2ecc71; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div>
+            <h2>🚨 Live Emergency Command</h2>
+            <div class="card">
+                <p><strong>Instructions:</strong></p>
+                <p>1. Your browser will auto-detect your <b>Live GPS Location</b> as the ambulance.</p>
+                <p>2. Click anywhere on the map to set the <b>Incident Location</b>.</p>
+            </div>
+            <div class="card">
+                <p><strong>Ambulance GPS:</strong> <span id="amb-coords">Detecting...</span></p>
+                <p><strong>Selected Incident:</strong> <span id="inc-coords">Click map to set</span></p>
+            </div>
+            <button onclick="dispatchAmbulance()">Dispatch & Optimize Route</button>
+        </div>
+        <div class="card">
+            <strong>System Telemetry Log:</strong>
+            <div id="logs" class="log-box">Initializing GPS sensor...</div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // Initialize map centered roughly around Delhi/NCR
+        var map = L.map('map').setView([28.6139, 77.2090], 13);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let ambulanceLat = 28.6139; // Default fallback
+        let ambulanceLon = 77.2090;
+        let incidentLat = 28.6280;
+        let incidentLon = 77.2200;
+
+        let ambulanceMarker = null;
+        let incidentMarker = null;
+
+        var ambulanceIcon = L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/3063/3063822.png',
+            iconSize: [35, 35]
+        });
+
+        var disasterIcon = L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/564/564619.png',
+            iconSize: [35, 35]
+        });
+
+        // 1. Automatically fetch device's live browser GPS location
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                function(position) {
+                    ambulanceLat = position.coords.latitude;
+                    ambulanceLon = position.coords.longitude;
+
+                    document.getElementById('amb-coords').innerText = `${ambulanceLat.toFixed(4)}, ${ambulanceLon.toFixed(4)}`;
+                    
+                    // Center map on live location and place ambulance marker
+                    map.setView([ambulanceLat, ambulanceLon], 14);
+                    ambulanceMarker = L.marker([ambulanceLat, ambulanceLon], {icon: ambulanceIcon}).addTo(map)
+                                     .bindPopup("<b>Live Ambulance (Your Device GPS)</b>").openPopup();
+                    
+                    logMessage("Live device GPS acquired successfully!");
+                },
+                function(error) {
+                    logMessage("GPS permission denied or unavailable. Using default station coordinates.");
+                    ambulanceMarker = L.marker([ambulanceLat, ambulanceLon], {icon: ambulanceIcon}).addTo(map);
+                    document.getElementById('amb-coords').innerText = `Default (Delhi Central)`;
+                }
+            );
+        } else {
+            logMessage("Geolocation not supported by this browser.");
+        }
+
+        // 2. Map click event to select disaster/incident location
+        map.on('click', function(e) {
+            incidentLat = e.latlng.lat;
+            incidentLon = e.latlng.lng;
+
+            document.getElementById('inc-coords').innerText = `${incidentLat.toFixed(4)}, ${incidentLon.toFixed(4)}`;
+
+            if (incidentMarker) {
+                map.removeLayer(incidentMarker);
+            }
+
+            incidentMarker = L.marker([incidentLat, incidentLon], {icon: disasterIcon}).addTo(map)
+                             .bindPopup("<b>Active Emergency Incident</b>").openPopup();
+            
+            logMessage(`Incident pinned at: ${incidentLat.toFixed(4)}, ${incidentLon.toFixed(4)}`);
+        });
+
+        // 3. Send live coordinates to FastAPI backend
+        function dispatchAmbulance() {
+            logMessage("Sending live telemetry to routing engine...");
+
+            const url = `http://127.0.0.1:8000/optimize?ambulance_lat=${ambulanceLat}&ambulance_lon=${ambulanceLon}&incident_lat=${incidentLat}&incident_lon=${incidentLon}`;
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if(data.error) {
+                        logMessage("Error: " + data.error);
+                        alert(data.error);
+                        return;
+                    }
+
+                    logMessage("SUCCESS! Route optimized.");
+                    logMessage(`Hospital: ${data.assigned_hospital.name}`);
+                    logMessage(`Beds Open: ${data.assigned_hospital.available_beds}`);
+                    alert(data.recommended_action);
+                })
+                .catch(error => {
+                    logMessage("Connection failed: Is uvicorn running?");
+                    console.error('Error:', error);
+                });
+        }
+
+        function logMessage(msg) {
+            const box = document.getElementById('logs');
+            box.innerHTML += `<br>> ${msg}`;
+            box.scrollTop = box.scrollHeight;
+        }
+    </script>
+</body>
+</html>
